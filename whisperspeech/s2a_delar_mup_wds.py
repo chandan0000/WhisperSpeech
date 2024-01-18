@@ -88,7 +88,8 @@ def load_datasets(
 
     speakers = set()
     for shard in shards:
-        with open(shard+'.speakers.txt') as f: speakers = speakers.union(set(x.strip() for x in f.readlines()))
+        with open(f'{shard}.speakers.txt') as f:
+            speakers = speakers.union({x.strip() for x in f.readlines()})
     speakers = {id:i for i,id in enumerate(sorted(speakers))}
 
     def ds(shards, length):
@@ -103,7 +104,7 @@ def load_datasets(
         ds.speakers = speakers
         ds.total_samples = length
         return ds.compose(wds.slice(length // 64)).with_epoch(length // 64).with_length(length // 64)
-    
+
     return (
         ds(shards[1:], samples),
         ds(shards[:1], val_samples),
@@ -389,18 +390,17 @@ class DelSumDecoder(nn.Module):
                 embs[:,i+1:] += self.embeddings[i](toks[:,i,:newn-i-1])
 
         x = embs.to(xenc.dtype)
-    
+
         for l in self.layers:
             x = l(x, xenc, causal=True)
         x = self.ln_post(x)
 
         if self.linear_heads:
-            logits = self.heads(x).view(b,newn,self.quantizers,self.codes+1).permute(0,2,1,3)
-        else:
-            split = self.splitter(x).view(b,newn,self.quantizers,self.width)
-            logits = torch.stack([self.heads[q](split[:,:,q]) for q in range(self.quantizers)], dim=1)
-
-        return logits
+            return self.heads(x).view(b,newn,self.quantizers,self.codes+1).permute(0,2,1,3)
+        split = self.splitter(x).view(b,newn,self.quantizers,self.width)
+        return torch.stack(
+            [self.heads[q](split[:, :, q]) for q in range(self.quantizers)], dim=1
+        )
     
 class EmbeddingProjector(nn.Linear):
     pass
@@ -445,9 +445,10 @@ class Tunables:
             
     @staticmethod
     def upgrade(args):
-        args = {k:v for k,v in args.items()}
+        args = dict(args.items())
         def old_default(name, value):
             if name not in args: args[name] = value
+
         old_default('rope', False)
         old_default('linear_heads', True)
         return args
@@ -568,15 +569,19 @@ class SADelARTransformer(nn.Module):
             if self.spk_factor: spk_embs = self.spk_to_hidden(spk_embs)
             logits = self.decoder(Atoks_gt, xenc + spk_embs.unsqueeze(1))
             logits *= self.tunables.output_mult / (self.width / self.base_width)
-            
+
         if noloss:
             return logits
 
         with record_function("loss"):
             N = Atoks.shape[-1]
-            loss = 0
-            for i in range(self.quantizers):
-                loss += F.cross_entropy(logits[:,i,i:].reshape(-1,logits.shape[-1]), Atoks[:,i,:N-i].reshape(-1))
+            loss = sum(
+                F.cross_entropy(
+                    logits[:, i, i:].reshape(-1, logits.shape[-1]),
+                    Atoks[:, i, : N - i].reshape(-1),
+                )
+                for i in range(self.quantizers)
+            )
             loss /= self.quantizers
 
         if not self.training:
@@ -636,10 +641,7 @@ class SADelARTransformer(nn.Module):
     @torch.no_grad()
     def generate(self, stoks, speakers, N=None, T=0.7, top_k=None, show_progress_bar=True):
         dev = self.device
-        if self.stoks_len == 1500:
-            N = N or len(stoks) * 3 // 2
-        else:
-            N = N or len(stoks) * 3
+        N = N or len(stoks) * 3 // 2 if self.stoks_len == 1500 else N or len(stoks) * 3
         stoks = F.pad(stoks.to(dev), (0, self.stoks_len - len(stoks)), value=self.stoks_codes-1).unsqueeze(0)
         speakers = torch.tensor([self.speaker_map[spk] for spk in speakers], device=dev)
         toks = torch.zeros((1,self.quantizers,N), dtype=torch.long, device=dev)

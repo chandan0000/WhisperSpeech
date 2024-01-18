@@ -80,8 +80,7 @@ class Pipeline:
         elif isinstance(speaker, (str, Path)): speaker = self.extract_spk_emb(speaker)
         text = text.replace("\n", " ")
         stoks = self.t2s.generate(text, cps=cps, lang=lang, step=step_callback)
-        atoks = self.s2a.generate(stoks, speaker.unsqueeze(0), step=step_callback)
-        return atoks
+        return self.s2a.generate(stoks, speaker.unsqueeze(0), step=step_callback)
         
     def generate(self, text, speaker=None, lang='en', cps=15, step_callback=None):
         return self.vocoder.decode(self.generate_atoks(text, speaker, lang=lang, cps=cps, step_callback=step_callback))

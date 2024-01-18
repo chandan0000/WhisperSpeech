@@ -62,25 +62,31 @@ def prepare_t2s(
     else:
         vq_model = vq_stoks.RQBottleneckTransformer.load_model(local_filename=vq_model).cuda()
     transcriber = Transcriber(transcription_model)
-        
+
     if input == "-":
         input = [f.strip() for f in sys.stdin.readlines()]
         assert output, "please provide the output shard name"
     else:
         if output is None: output = flac_to_t2s_name(input)
         input = [input]
-        
+
     total = n_samples//batch_size if n_samples else 'noinfer'
     if n_samples: print(f"Benchmarking run of {n_samples} samples ({total} batches)")
 
-    ds = wds.WebDataset(input, shardshuffle=True, rename_files=vad.fix_dots_in_names).compose(
+    ds = wds.WebDataset(
+        input, shardshuffle=True, rename_files=vad.fix_dots_in_names
+    ).compose(
         wds.decode(wds.torch_audio),
         vq_stoks.merge_in(vq_stoks.derived_dataset(proc_dataset_path, 'vad')),
-        wds.map_dict(**{"vad.npy": lambda s: wh_transcribe.chunk_merger(s, wh_transcribe.random_cutter)}),
+        wds.map_dict(
+            **{
+                "vad.npy": lambda s: wh_transcribe.chunk_merger(
+                    s, wh_transcribe.random_cutter
+                )
+            }
+        ),
         lambda x: wh_transcribe.split_to_chunks(x),
-        # drop the first and last segment because they tend to be inaccurate
-        # (the transcriptions don't have the "LibriVox" header and "end of chapter" suffix)
-        wds.select(lambda x: x['i'] != 0 and x['i'] != x['imax']),
+        wds.select(lambda x: x['i'] not in [0, x['imax']]),
         wds.to_tuple('__key__', 'rpad', 'samples'),
         wds.batched(64),
     )
@@ -88,7 +94,7 @@ def prepare_t2s(
     dl = wds.WebLoader(ds, num_workers=4, batch_size=None).unbatched().shuffle(2000).batched(batch_size)
 
     speakers = set()
-    tmp = output+".tmp"
+    tmp = f"{output}.tmp"
     with wds.TarWriter(tmp) as sink:
         for keys, rpads, samples in progress_bar(dl, total=total):
             with record_function('to_cuda'):
@@ -106,6 +112,6 @@ def prepare_t2s(
                     "txt": txt,
                     "stoks.npy": _stoks[:int(-rpad/16000 * 25)],
                 })
-    with open(output+".speakers.txt", "w") as f: f.write("\n".join(speakers))
+    with open(f"{output}.speakers.txt", "w") as f: f.write("\n".join(speakers))
     if not n_samples:
         os.rename(tmp, output)

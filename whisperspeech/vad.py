@@ -26,8 +26,7 @@ def fix_dots_in_names(name):
 
 def load_dataset(url, decode=True, rename_files=None):
     ds = wds.WebDataset(url, rename_files=rename_files)
-    if not decode: return ds
-    return ds.decode(wds.torch_audio)
+    return ds if not decode else ds.decode(wds.torch_audio)
 
 # %% ../nbs/1B. Voice activity detection.ipynb 7
 def extract_segments(vad_result, max_duration):
@@ -53,11 +52,11 @@ def process_shard(
     fix_dots:bool=False, # fix dots in LibriLight filenames
 ):
     if output is None: output = flac_to_vad_name(input)
-    
+
     ds = torch.utils.data.DataLoader(load_dataset(input, rename_files=fix_dots_in_names if fix_dots else None), num_workers=2, batch_size=None)
     vad_model = whisperx.vad.load_vad_model('cuda')
-    
-    tmp = output+".tmp"
+
+    tmp = f"{output}.tmp"
     with wds.TarWriter(tmp) as sink:
         for s in progress_bar(ds, total='noinfer'):
             audio, sr = s.get('flac', s.get('wav', (None, None)))

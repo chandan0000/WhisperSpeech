@@ -90,10 +90,10 @@ def get_length_of_dataset(dataset):
     """
     Utility method to get length of dataset in hours
     """
-    length = 0
-    for item in dataset:
-        # length in seconds
-        length += (len(item["audio"]["array"]) / item["audio"]["sampling_rate"])
+    length = sum(
+        (len(item["audio"]["array"]) / item["audio"]["sampling_rate"])
+        for item in dataset
+    )
     # length in hours
     return length//3600
 

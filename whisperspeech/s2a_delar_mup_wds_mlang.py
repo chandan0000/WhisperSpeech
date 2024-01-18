@@ -56,7 +56,8 @@ def pad_samples(atoks_len = 2250, stoks_len = 750, stoks_pad_token = 4096):
 def make_speaker_map(shards):
     speakers = set()
     for shard in shards:
-        with open(shard+'.speakers.txt') as f: speakers = speakers.union(set(x.strip() for x in f.readlines()))
+        with open(f'{shard}.speakers.txt') as f:
+            speakers = speakers.union({x.strip() for x in f.readlines()})
     return {id:i for i,id in enumerate(sorted(speakers))}
 
 def speaker_id_extractor(speaker_map):
@@ -210,9 +211,10 @@ class Tunables:
             
     @staticmethod
     def upgrade(args):
-        args = {k:v for k,v in args.items()}
+        args = dict(args.items())
         def old_default(name, value):
             if name not in args: args[name] = value
+
         old_default('rope', False)
         old_default('linear_heads', True)
         return args
@@ -485,13 +487,11 @@ class SADelARTransformer(nn.Module):
             v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
             pivot = v.select(-1, -1).unsqueeze(-1)
             logits = torch.where(logits < pivot, -float("Inf"), logits)
-        probs = torch.nn.functional.softmax(logits, dim=-1)
-        return probs
+        return torch.nn.functional.softmax(logits, dim=-1)
 
     def sample(self, logits, T=1.0, top_k=None):
         probs = self.logits_to_probs(logits[0,:,-1], T, top_k)
-        idx_next = self.multinomial_sample_one_no_sync(probs)
-        return idx_next
+        return self.multinomial_sample_one_no_sync(probs)
 
     def generate_one(self, toks, positions, langs, xenc, xenc_positions, T, top_k):
         probs = self(None, toks, None, langs, noloss=True, xenc=xenc, xenc_positions=xenc_positions, atoks_positions=positions)

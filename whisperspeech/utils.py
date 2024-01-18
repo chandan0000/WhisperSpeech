@@ -18,16 +18,15 @@ import torch.nn.functional as F
 def shard_glob(input):
     if '{' in input:
         return wds.shardlists.expand_urls(input)
-    if isinstance(input, (Path, str)):
-        path = Path(input)
-        if path.is_dir():
-            glob = '*.tar.gz'
-        else:
-            glob = path.name
-            path = path.parent
-        input = Path(path).glob(glob)
-    else:
+    if not isinstance(input, (Path, str)):
         raise ArgumentError("input should be either a list or a path with an optional glob specifier")
+    path = Path(input)
+    if path.is_dir():
+        glob = '*.tar.gz'
+    else:
+        glob = path.name
+        path = path.parent
+    input = Path(path).glob(glob)
     return [str(x) for x in input]
 
 # %% ../nbs/D. Common dataset utilities.ipynb 3
@@ -45,7 +44,7 @@ class join_datasets(torch.utils.data.IterableDataset):
                 return    
     
     def __len__(self):
-        return sum([ds.total_samples for ds in self.datasets])
+        return sum(ds.total_samples for ds in self.datasets)
 
 # %% ../nbs/D. Common dataset utilities.ipynb 5
 def resampler(newsr = 24000, key = 'samples_24k'):
@@ -147,7 +146,7 @@ def vad_dataset(shards, ikey='vad.npy', kind='vad'):
 # %% ../nbs/D. Common dataset utilities.ipynb 11
 @contextmanager
 def AtomicTarWriter(name, throwaway=False):
-    tmp = name+".tmp"
+    tmp = f"{name}.tmp"
     with wds.TarWriter(tmp, compress=name.endswith('gz')) as sink:
         yield sink
     if not throwaway:
