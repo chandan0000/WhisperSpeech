@@ -117,9 +117,7 @@ def process_shard(
 ):
     if output is None: output = flac_to_txt_name(input, whisper_model)
     if bs is None: bs = 16
-    if n_samples is None: n_samples = 'noinfer'
-    else: n_samples = n_samples // bs
-
+    n_samples = 'noinfer' if n_samples is None else n_samples // bs
     ds = wds_compose(vad.load_dataset(input),
         merge_in(wds.WebDataset(vad.flac_to_vad_name(input)).decode()),
         wds.map_dict(**{"vad.npy":chunk_merger}),
@@ -128,11 +126,11 @@ def process_shard(
         wds.batched(bs),
     )
     dl = DataLoader(ds, num_workers=2, batch_size=None)
-    
+
     whmodel = whisper.load_model(whisper_model)
     decoding_options = whisper.DecodingOptions(language='en')
-    
-    tmp = output+".tmp"
+
+    tmp = f"{output}.tmp"
     with wds.TarWriter(tmp) as sink:
         for keys, samples in progress_bar(dl, total=n_samples):
             with torch.no_grad():

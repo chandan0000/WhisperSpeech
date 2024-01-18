@@ -55,9 +55,12 @@ def ar_padder(ikey, okey, length, pad_token):
             toks = s[ikey]
             if isinstance(toks, (list, np.ndarray)): toks = torch.tensor(toks)
             toks = toks.to(torch.long)
-            s['in_' +okey] = F.pad(toks, (1, length - toks.shape[-1] - 1), value=pad_token)
-            s['out_'+okey] = F.pad(toks, (0, length - toks.shape[-1]), value=pad_token)
+            s[f'in_{okey}'] = F.pad(
+                toks, (1, length - toks.shape[-1] - 1), value=pad_token
+            )
+            s[f'out_{okey}'] = F.pad(toks, (0, length - toks.shape[-1]), value=pad_token)
             yield s
+
     return _ar_padder
 
 def char_per_seconder(txt_key, stoks_key, cps_key, stoks_per_second=25):
@@ -394,13 +397,11 @@ class TSARTransformer(nn.Module):
             pivot = v.select(-1, -1).unsqueeze(-1)
             logits = torch.where(logits < pivot, -float("Inf"), logits)
 
-        probs = torch.nn.functional.softmax(logits, dim=-1)
-        return probs
+        return torch.nn.functional.softmax(logits, dim=-1)
 
     def sample(self, logits, T=1.0, top_k=None):
         probs = self.logits_to_probs(logits[0,-1], T, top_k)
-        idx_next = self.multinomial_sample_one_no_sync(probs)
-        return idx_next
+        return self.multinomial_sample_one_no_sync(probs)
 
     def generate_one(self, toks, toks_positions, cps_emb, xenc, xenc_positions, T, top_k):
         probs, _ = self(None, None, None, None, toks, toks_positions, loss=None, xenc=xenc, xenc_positions=xenc_positions, cps_emb=cps_emb)

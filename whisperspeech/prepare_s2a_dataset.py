@@ -71,7 +71,7 @@ def prepare_s2a(
     else:
         if output is None: output = flac_to_s2a_name(input)
         input = [input]
-        
+
     total = n_samples//batch_size if n_samples else 'noinfer'
 
     ds = wds.WebDataset(input, shardshuffle=True, rename_files=vad.fix_dots_in_names if fix_dots else None).compose(
@@ -89,7 +89,7 @@ def prepare_s2a(
     dl = wds.WebLoader(ds, num_workers=4, batch_size=None).unbatched().shuffle(2000).batched(batch_size)
 
     speakers = set()
-    tmp = output+".tmp"
+    tmp = f"{output}.tmp"
     with wds.TarWriter(tmp) as sink:
         for keys, rpad_ss, samples, samples24k in progress_bar(dl, total=total):
             with record_function('to_cuda'):
@@ -107,6 +107,6 @@ def prepare_s2a(
                     "atoks.npy": _atoks[:,:int(-rpad_s * 75)],
                     "stoks.npy": _stoks[:int(-rpad_s * 25)],
                 })
-    with open(output+".speakers.txt", "w") as f: f.write("\n".join(speakers))
+    with open(f"{output}.speakers.txt", "w") as f: f.write("\n".join(speakers))
     if not n_samples:
         os.rename(tmp, output)

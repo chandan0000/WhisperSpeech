@@ -105,7 +105,10 @@ class TrainingTask(pl.LightningModule):
 
     def on_validation_epoch_end(self):
         if hasattr(self.model, 'get_metrics'):
-            self.log_dict({'metrics/'+k:v for k,v in self.model.get_metrics().items()}, sync_dist=True)
+            self.log_dict(
+                {f'metrics/{k}': v for k, v in self.model.get_metrics().items()},
+                sync_dist=True,
+            )
     
     def test_step(self, val_batch, batch_idx):
         test_logits, test_loss = self.model.forward(*val_batch)
@@ -122,8 +125,9 @@ import shlex
 def parse_and_call(name, fun, args, kwargs={}, log_to_wandb=True):
     p = anno_parser(fun)
     args = p.parse_args(args).__dict__
-    args.pop('xtra'); args.pop('pdb')
-    args.update({k:v for k, v in kwargs.items()})
+    args.pop('xtra')
+    args.pop('pdb')
+    args.update(dict(kwargs.items()))
     if log_to_wandb and type(wandb_logger.experiment.config) == wandb.sdk.wandb_config.Config:
         wandb_logger.experiment.config[name] = {k:v for k,v in args.items() if k not in ['dataset', 'tunables']}
     return fun(**args)
@@ -163,17 +167,17 @@ batch_size: int = args.pop("batch_size")
 epochs: int = args.pop("epochs")
 tunables_args: list = shlex.split(args.pop("tunables"))
 
-hyp_params = {}
-hyp_params['batch_size'] = batch_size
-hyp_params['warmup_steps'] = args['warmup_steps']
-hyp_params['weight_decay'] = args['weight_decay']
-hyp_params['clip_gradient_norm'] = args['clip_gradient_norm']
-hyp_params['accumulate_grad_batches'] = args['accumulate_grad_batches']
-hyp_params['precision'] = args['precision']
-hyp_params['lr0'] = args['lr0']
-hyp_params['epochs'] = epochs
-hyp_params['strategy'] = args['strategy']
-
+hyp_params = {
+    'batch_size': batch_size,
+    'warmup_steps': args['warmup_steps'],
+    'weight_decay': args['weight_decay'],
+    'clip_gradient_norm': args['clip_gradient_norm'],
+    'accumulate_grad_batches': args['accumulate_grad_batches'],
+    'precision': args['precision'],
+    'lr0': args['lr0'],
+    'epochs': epochs,
+    'strategy': args['strategy'],
+}
 # %% ../nbs/B2. Training (Lightning).ipynb 9
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.callbacks import LearningRateMonitor
@@ -201,7 +205,7 @@ lr_monitor_callback = LearningRateMonitor(logging_interval='step')
 
 from torch.utils.data import DataLoader
 
-task = importlib.import_module("whisperspeech."+task_name)
+task = importlib.import_module(f"whisperspeech.{task_name}")
 
 train_ds, val_ds = parse_and_call('dataset', task.load_datasets, input_args)
 
@@ -256,7 +260,7 @@ trainer = pl.Trainer(strategy=hyp_params['strategy'],
 
 if type(wandb_logger.experiment.config) == wandb.sdk.wandb_config.Config:
     wandb_logger.experiment.config.update(hyp_params)
-    
+
 kwargs = {}
 if 'resume_from' in args:
     kwargs['ckpt_path'] = args['resume_from']

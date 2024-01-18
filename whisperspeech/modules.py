@@ -244,7 +244,7 @@ class BaseDecoder(nn.Module):
         self.register_buffer("mask", mask, persistent=False)
 
     def forward(self, x, x_positions, xenc, xenc_positions):
-        for i,l in enumerate(self.layers):
+        for l in self.layers:
             x = l(x, x_positions, xenc, xenc_positions, causal=False, mask=self.mask)
 
         x = self.ln_post(x)

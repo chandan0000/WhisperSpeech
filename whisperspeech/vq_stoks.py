@@ -113,10 +113,10 @@ def load_dataset(
     ):
     from . import wh_transcribe
     shards = utils.shard_glob(shard_spec)
-    
+
     if not language and model.endswith('en'): language = 'en'
     assert language, "please provide the dataset language for multilang models"
-    
+
     same_on_all_nodes = lambda urls: urls # will only be used for validation
     ds = wds.WebDataset(shards, resampled=not validation, nodesplitter=same_on_all_nodes).compose(
         wds.decode(wds.torch_audio),
@@ -129,11 +129,7 @@ def load_dataset(
         merge_in(derived_dataset(proc_dataset_path, txt_label, key=key)),
     )
     if 'librilight' in shards[0]:
-        ds = ds.compose(
-            # drop the first and last segment because they tend to be inaccurate
-            # (the transcriptions don't have the "LibriVox" headers and "end of chapter" suffixes)
-            wds.select(lambda x: x['i'] != 0 and x['i'] != x['imax']),
-        )
+        ds = ds.compose(wds.select(lambda x: x['i'] not in [0, x['imax']]))
     ds = ds.compose(
         add_masks,
         lambda x: tokenize_text(x, model=model, language=language),
@@ -141,7 +137,7 @@ def load_dataset(
         wds.batched(32),
     )
     ds.total_samples = samples
-    
+
     return ds
 
 # %% ../nbs/2B. Whisper quantization (semantic token) model.ipynb 28
@@ -199,9 +195,10 @@ class Tunables:
             
     @staticmethod
     def upgrade(args):
-        args = {k:v for k,v in args.items()}
+        args = dict(args.items())
         def old_default(name, value):
             if name not in args: args[name] = value
+
         old_default('output_mult', 1)
         old_default('query_mult', 1)
         old_default('rope', False)
@@ -326,7 +323,7 @@ class RQBottleneckTransformer(nn.Module):
     
     def forward(self, samples, mask, input_toks, output_toks):
         embs, teacher_logits = self.extract_teacher(samples, input_toks, output_toks)
-        
+
         x = self.downsample_embeddings(embs)
         x = x + self.mlp(self.mlp_ln(x))
         # VQ bottleneck
@@ -334,17 +331,18 @@ class RQBottleneckTransformer(nn.Module):
         self.commit_loss = self.commit_loss.mean()
 
         x = quantized.repeat_interleave(self.downsample, -2)
-        project_out = getattr(self.rq, 'project_out', None) or self.rq.layers[0].project_out
-        if self.tunables.mask_embs: x[~mask] = project_out(self.rq.layers[0]._codebook.embed[0,self.vq_codes])
+        if self.tunables.mask_embs:
+            project_out = getattr(self.rq, 'project_out', None) or self.rq.layers[0].project_out
+            x[~mask] = project_out(self.rq.layers[0]._codebook.embed[0,self.vq_codes])
         positions = torch.arange(0, x.shape[-2], dtype=torch.long, device=x.device)
         x = x + self.positional_embedding(positions)
         x = self.ln_post(self.out_blocks(x))
-        
+
         logits = self.whmodel[0].decoder(input_toks, x)
         self.ce_loss = self.ce_lossf(logits.view(-1,logits.shape[-1]), output_toks.view(-1))
         self.kl_loss = self.kl_lossf(F.log_softmax(logits, dim=-1), F.softmax(teacher_logits, dim=-1))
         loss = self.ce_loss + self.kl_loss_mul * self.kl_loss + self.commit_loss
-        
+
         if not self.training:
             valid_toks = output_toks != -100
             self.val_true += (logits.argmax(-1)[valid_toks] == output_toks[valid_toks]).float().sum()
@@ -456,38 +454,94 @@ class RQBottleneckTransformer(nn.Module):
 # %% ../nbs/2B. Whisper quantization (semantic token) model.ipynb 33
 def make_model(size:str, tunables:Tunables=Tunables(), dataset:torch.utils.data.Dataset=None):
     if size == 'base.en-2d-4096c':
-        model = RQBottleneckTransformer(codebook_dim=32, vq_codes=4096, q_depth=1, n_head=8, depth=1,
-                                        downsample=2, threshold_ema_dead_code=0, use_cosine_sim=True,
-                                        whisper_model_name=size.split("-")[0], tunables=tunables)
-        return model
+        return RQBottleneckTransformer(
+            codebook_dim=32,
+            vq_codes=4096,
+            q_depth=1,
+            n_head=8,
+            depth=1,
+            downsample=2,
+            threshold_ema_dead_code=0,
+            use_cosine_sim=True,
+            whisper_model_name=size.split("-")[0],
+            tunables=tunables,
+        )
     if size == 'base.en-2d-512c':
-        model = RQBottleneckTransformer(codebook_dim=32, vq_codes=512, q_depth=1, n_head=8, depth=1,
-                                        downsample=2, threshold_ema_dead_code=0, use_cosine_sim=True,
-                                        whisper_model_name=size.split("-")[0], tunables=tunables)
-        return model
+        return RQBottleneckTransformer(
+            codebook_dim=32,
+            vq_codes=512,
+            q_depth=1,
+            n_head=8,
+            depth=1,
+            downsample=2,
+            threshold_ema_dead_code=0,
+            use_cosine_sim=True,
+            whisper_model_name=size.split("-")[0],
+            tunables=tunables,
+        )
     if size == 'base.en-2d-512c-dim64':
-        model = RQBottleneckTransformer(codebook_dim=64, vq_codes=512, q_depth=1, n_head=8, depth=1,
-                                        downsample=2, threshold_ema_dead_code=0, use_cosine_sim=True,
-                                        whisper_model_name=size.split("-")[0], tunables=tunables)
-        return model
+        return RQBottleneckTransformer(
+            codebook_dim=64,
+            vq_codes=512,
+            q_depth=1,
+            n_head=8,
+            depth=1,
+            downsample=2,
+            threshold_ema_dead_code=0,
+            use_cosine_sim=True,
+            whisper_model_name=size.split("-")[0],
+            tunables=tunables,
+        )
     if size == 'base-2d-512c-dim64':
-        model = RQBottleneckTransformer(codebook_dim=64, vq_codes=512, q_depth=1, n_head=8, depth=1,
-                                        downsample=2, threshold_ema_dead_code=0, use_cosine_sim=True,
-                                        whisper_model_name=size.split("-")[0], tunables=tunables)
-        return model
+        return RQBottleneckTransformer(
+            codebook_dim=64,
+            vq_codes=512,
+            q_depth=1,
+            n_head=8,
+            depth=1,
+            downsample=2,
+            threshold_ema_dead_code=0,
+            use_cosine_sim=True,
+            whisper_model_name=size.split("-")[0],
+            tunables=tunables,
+        )
     if size == 'base-2d-1024c-dim64':
-        model = RQBottleneckTransformer(codebook_dim=64, vq_codes=1024, q_depth=1, n_head=8, depth=1,
-                                        downsample=2, threshold_ema_dead_code=0, use_cosine_sim=True,
-                                        whisper_model_name=size.split("-")[0], tunables=tunables)
-        return model
+        return RQBottleneckTransformer(
+            codebook_dim=64,
+            vq_codes=1024,
+            q_depth=1,
+            n_head=8,
+            depth=1,
+            downsample=2,
+            threshold_ema_dead_code=0,
+            use_cosine_sim=True,
+            whisper_model_name=size.split("-")[0],
+            tunables=tunables,
+        )
     if size == 'medium-2d-512c-dim64':
-        model = RQBottleneckTransformer(codebook_dim=64, vq_codes=512, q_depth=1, n_head=16, depth=1,
-                                        downsample=2, threshold_ema_dead_code=0, use_cosine_sim=True,
-                                        whisper_model_name=size.split("-")[0], tunables=tunables)
-        return model
+        return RQBottleneckTransformer(
+            codebook_dim=64,
+            vq_codes=512,
+            q_depth=1,
+            n_head=16,
+            depth=1,
+            downsample=2,
+            threshold_ema_dead_code=0,
+            use_cosine_sim=True,
+            whisper_model_name=size.split("-")[0],
+            tunables=tunables,
+        )
     if size == 'medium-2d-1024c-dim64':
-        model = RQBottleneckTransformer(codebook_dim=64, vq_codes=1024, q_depth=1, n_head=16, depth=1,
-                                        downsample=2, threshold_ema_dead_code=0, use_cosine_sim=True,
-                                        whisper_model_name=size.split("-")[0], tunables=tunables)
-        return model
+        return RQBottleneckTransformer(
+            codebook_dim=64,
+            vq_codes=1024,
+            q_depth=1,
+            n_head=16,
+            depth=1,
+            downsample=2,
+            threshold_ema_dead_code=0,
+            use_cosine_sim=True,
+            whisper_model_name=size.split("-")[0],
+            tunables=tunables,
+        )
     raise ArgumentError(f"invalid model size: {size}")

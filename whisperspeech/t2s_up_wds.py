@@ -78,7 +78,8 @@ def char_per_seconder(txt_key, stoks_key, cps_key, stoks_per_second=25):
 def build_speaker_map(shards):
     speakers = set()
     for shard in shards:
-        with open(shard+'.speakers.txt') as f: speakers = speakers.union(set(x.strip() for x in f.readlines()))
+        with open(shard+'.speakers.txt') as f:
+            speakers = speakers.union({x.strip() for x in f.readlines()})
     return {id:i for i,id in enumerate(speakers)}
 
 def speaker_id_extractor(speaker_map):
@@ -237,23 +238,22 @@ class Decoder(nn.Module):
         
     def forward(self, Stoks, xenc, cps=None):
         Sembs = self.embedding(Stoks)
-            
+
         if self.emb_factor:
             Sembs = self.emb_to_hidden(Sembs)
-    
+
         xin = (Sembs + self.positional_embedding[:Sembs.shape[1]]).to(xenc.dtype)
         if cps is not None: xin = xin + cps
-    
+
         x = xin
         for l in self.layers: x = l(x, xenc, causal=True)
-        
+
         x = self.ln_post(x)
-    
+
         if self.emb_factor:
             x = self.hidden_to_emb(x)
-        
-        logits = (x @ self.embedding.weight.to(x.dtype).T).float()
-        return logits
+
+        return (x @ self.embedding.weight.to(x.dtype).T).float()
 
 # %% ../nbs/5B. Text to semantic token modeling.ipynb 18
 class TSARTransformer(nn.Module):

@@ -14,10 +14,7 @@ import pandas as pd
 # %% ../nbs/C. Word error rate metrics.ipynb 3
 engnorm = EnglishTextNormalizer()
 def whisper_normalize(x):
-    if type(x) == list:
-        return [engnorm(y) for y in x]
-    else:
-        return engnorm(x)
+    return [engnorm(y) for y in x] if type(x) == list else engnorm(x)
 
 default_transform = jiwer.transforms.Compose([
     jiwer.transforms.ToLowerCase(),
